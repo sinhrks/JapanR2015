@@ -1,0 +1,229 @@
+---
+title: "japan.R"
+output: html_document
+---
+
+```{r}
+library(knitr)
+
+library(Hmisc)
+knit_print.list <- function(x, ...) {
+  list.tree(x)
+}
+```
+
+## data.frame の処理
+
+```{r, warning = FALSE, message = FALSE}
+iris_group <- split(iris, iris$Species)
+res <- sapply(iris_group, function(x) { sapply(x[, 1:4], mean) })
+as.data.frame(t(res))
+```
+
+```{r, warning = FALSE, message = FALSE}
+library(plyr)
+plyr::ddply(iris, .(Species), plyr::colwise(mean))
+```
+
+```{r, warning = FALSE, message = FALSE}
+library(dplyr)
+dplyr::summarise_each(dplyr::group_by(iris, Species), dplyr::funs(mean))
+```
+
+```{r}
+iris %>%
+  dplyr::group_by(Species) %>%
+  dplyr::summarise_each(dplyr::funs(mean))
+```
+
+## purrr とは
+
+```{r}
+library(purrr)
+```
+
+```{r}
+map(c(1, 2, 3), ~ . + 1)
+map(list(a = 1, b = 2, c = 3), ~ . + 1)
+```
+
+```{r}
+map2(c(1, 2, 3), c(4, 5, 6), ~ .x * .y)
+map_int(list(a = 1L, b = 2L, c = 3L), ~ . + 1L)
+```
+
+```{r}
+keep(c(1, 2, 3), ~ . >= 2)
+keep(list(a = 1, b = 2, c = 3), ~ . >=  2)
+```
+
+```{r}
+reduce(c(1, 2, 3), `+`)
+reduce(list(a = 1, b = 2, c = 3), `+`)
+```
+
+```{r}
+split_by(c(1, 2, 3), ~ . %% 2)
+split_by(list(a = 1, b = 2, c = 3), ~ . %% 2)
+```
+
+```{r}
+sort_by(c(2, -3, 1), ~ abs(.))
+order_by(c(2, -3, 1), ~ abs(.))
+sort_by(list(a = 2, b = - 3, c = 1), ~ abs(.))
+order_by(list(a = 2, b = - 3, c = 1), ~ abs(.))
+```
+
+## 利用例
+
+## data.frame への変換
+
+```{r}
+set.seed(1)
+
+ts1 <- ts(cumsum(runif(12, 0, 20)), start = 2000, freq = 12)
+
+data.frame(time = time(ts1), values = ts1)
+
+ts2 <- ts(cumsum(runif(12, 20, 30)), start = 2000, freq = 6)
+ts3 <- ts(cumsum(runif(12, 20, 30)), start = 2000, freq = 3)
+tss <- list(ts1=ts1, ts2=ts2, ts3=ts3)
+
+tss %>%
+  map(~ dplyr::data_frame(time = time(.), values = .)) %>%
+  dplyr::bind_rows()
+  
+res <- tss %>%
+  map2(., names(.),
+              ~ dplyr::data_frame(time = time(.x), values = .x, name = .y)) %>%
+  dplyr::bind_rows()
+ggplot(res, aes(time, values, colour = name)) + geom_line() 
+```
+
+# example 1: ダミーデータの作成
+
+```{r}
+set.seed(1)
+ndata <- c('hoxo-m', 'hoxo-eros', 'hoxo-um', 'hoxo-uri')
+dummies <- map(1:5, ~ list(name = sample(ndata, size = 1),
+                           age = sample(25:35, size = 1),
+                           likes = sample(ndata, size = 2)))
+dummies
+```
+
+```{r}
+set.seed(1)
+dummies <- map(ndata, ~ list(name = .,
+                           age = sample(30:35, size = 1),
+                           likes = sample(ndata[ndata != .], size = 2)))
+dummies
+```
+
+```{r}
+set.seed(1)
+dummies <- map(ndata, ~ list(name = .,
+                             age = sample(30:35, size = 1),
+                             likes = sample(ndata[ndata != .],
+                                            size = sample(1:(length(ndata) - 1), size = 1))))
+dummies
+```
+
+```{r}
+set.seed(1)
+gen <- function(name) {
+  age = sample(30:35, size = 1)
+  
+  size = sample(1:(length(ndata) - 1), size = 1)
+  likes = sample(ndata[ndata != name], size = size)
+  
+  return (list(name = name, age = age, likes = likes))
+}
+dummies <- map(ndata, ~ gen(.))
+dummies
+```
+
+```{r}
+ndata %>%
+  map(~ list(name = ., age = sample(30:35, size = 1))) %>%
+  dplyr::bind_rows()
+```
+
+# example 2: リストからのデータ選択
+
+```{r}
+keep(dummies, ~ .$name == 'hoxo-m')
+keep(dummies, ~ .$age > 30)
+```
+
+```{r}
+keep(dummies, ~ 'hoxo-m' %in% .$likes)
+```
+
+```{r}
+keep(dummies, ~ 'hoxo-m' %in% .$likes) %>%
+  map(~ .$name)
+
+keep(dummies, ~ 'hoxo-m' %in% .$likes) %>%
+  map('name')
+```
+
+# example 3: 複数のモデルの比較
+
+```{r}
+df <- read.csv('data3a.csv')
+head(df)
+
+# - y: 種子数
+# - x: 植物のサイズ
+# - f: 施肥あり(T) / なし 
+```
+
+```{r}
+formulas <- list(mod1 = y ~ x, mod2 = y ~ f, mod3 = y ~ x + f) 
+results <- map(formulas,
+                      ~ glm(formula = ., family = poisson, data = df))
+
+results[[1]]
+map(results, logLik)
+map(results, AIC) 
+sort_by(results, AIC) %>% names()
+```
+
+```{r}
+formulas <- c(y ~ x, y ~ x, y ~ f) 
+families <- c(poisson, gaussian, poisson)
+results2 <- map2(formulas, families,
+                      ~ glm(formula = .x, family = .y, data = df))
+
+results2[[1]]
+```
+
+# plot
+
+```{r, fig.width = 4, fig.height =4}
+plot(results[[1]], which = 2)
+```
+
+```{r, fig.width = 4, fig.height = 4}
+map(results, ~ plot(., which = 2))
+```
+
+```{r, fig.width = 4, fig.height = 4}
+map(results, plot, which = 2)
+```
+
+```{r}
+library(broom)
+glance(results[[1]])
+```
+
+```{r}
+map(results, broom::glance) %>%
+  dplyr::bind_rows()
+```
+
+```{r}
+library(ggfortify)
+autoplot(results, which = 2)
+```
+
